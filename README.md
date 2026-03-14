@@ -1,5 +1,13 @@
 # Smart Student Planner
 
+## Screenshots
+
+### Login Page
+![Login Page](login.png)
+
+### Dashboard
+![Dashboard](dashboard.png)
+
 A productivity web application designed to help students organize tasks, manage deadlines, and intelligently plan study time.
 
 Built with **FastAPI**, **SQLite**, and **Jinja2 templates**, the planner allows users to create tasks, prioritize work, and plan their day efficiently.
