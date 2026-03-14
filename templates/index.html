@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smart Student Planner</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .section-title { margin: 16px 0 8px; font-size: 0.95rem; opacity: 0.9; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:0.75rem; margin-left:8px; }
+    .badge.overdue { background: rgba(255,0,0,0.12); }
+    .badge.today { background: rgba(255,165,0,0.16); }
+    .badge.week { background: rgba(0,128,255,0.12); }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:0.75rem; opacity:0.85; margin-right:6px; }
+    .muted-small { opacity:0.7; font-size:0.85rem; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 780px) { .grid2 { grid-template-columns: 1fr; } }
+    .mini-card { border: 1px solid rgba(0,0,0,0.08); border-radius: 12px; padding: 12px; }
+    .mini-card h3 { margin: 0 0 8px; font-size: 0.95rem; }
+    .plan-list .task { margin-top: 8px; }
+    .highlight-box { margin-top: 10px; padding: 10px; border-radius: 12px; border: 1px solid rgba(0,0,0,0.08); }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <div class="topbar">
+      <div>
+        <h1>Smart Student Planner</h1>
+        <p class="subtitle">Tasks + deadlines + progress.</p>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="toggleTheme" class="btn">Toggle theme</button>
+        <button id="logoutBtn" class="btn danger">Logout</button>
+      </div>
+    </div>
+
+    <!-- Smart summary + daily plan -->
+    <section class="card">
+      <div class="grid2">
+        <div class="mini-card">
+          <h3>📌 Summary</h3>
+          <div class="muted-small" id="summaryText">Loading...</div>
+
+          <div style="margin-top:10px;">
+            <button id="nextBtn" class="btn">⚡ What should I do now?</button>
+            <div id="nextBox" class="highlight-box" style="display:none;"></div>
+          </div>
+        </div>
+
+        <div class="mini-card">
+          <h3>🗓️ Plan my day</h3>
+          <div class="row" style="gap:8px; align-items:center;">
+            <input id="budgetMinutes" type="number" min="10" placeholder="Minutes available (e.g. 120)" />
+            <button id="planBtn" class="btn">Plan</button>
+            <button id="clearPlanBtn" class="btn danger">Clear</button>
+          </div>
+          <div class="muted-small" id="planMeta" style="margin-top:8px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Add a task</h2>
+      <form id="taskForm" class="form">
+        <select id="importance" class="select">
+          <option value="1">Importance: 1</option>
+          <option value="2">Importance: 2</option>
+          <option value="3" selected>Importance: 3</option>
+          <option value="4">Importance: 4</option>
+          <option value="5">Importance: 5</option>
+        </select>
+
+        <input id="estimated_minutes" type="number" min="1" max="1440" placeholder="Minutes (e.g. 60)" />
+        <input id="title" type="text" placeholder="Task title (e.g. Finish stats homework)" required />
+        <input id="subject" type="text" placeholder="Subject (e.g. Statistics)" />
+        <input id="due_date" type="date" />
+        <button type="submit">Add</button>
+      </form>
+      <p id="msg" class="msg"></p>
+    </section>
+
+    <section class="card">
+      <div class="row space">
+        <h2>Your tasks</h2>
+
+        <div class="controls">
+          <select id="filterSelect" class="select">
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="done">Done</option>
+          </select>
+
+          <select id="sortSelect" class="select">
+            <option value="smart">Sort: Smart</option>
+            <option value="newest">Sort: Newest</option>
+            <option value="due">Sort: Due date</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Planned tasks -->
+      <div id="planArea" class="plan-list" style="display:none;">
+        <h3 class="section-title">✅ Your plan (saved)</h3>
+        <div id="planTasks" class="tasks"></div>
+      </div>
+
+      <!-- Smart sections -->
+      <div class="smart-sections">
+        <h3 class="section-title">🔥 Today / Overdue</h3>
+        <div id="tasksToday" class="tasks"></div>
+
+        <h3 class="section-title">📅 This Week</h3>
+        <div id="tasksWeek" class="tasks"></div>
+
+        <h3 class="section-title">🗂️ Later</h3>
+        <div id="tasksLater" class="tasks"></div>
+
+        <h3 class="section-title">✅ Done</h3>
+        <div id="tasksDone" class="tasks"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ----------------------------
+    // Auth guard + helpers
+    // ----------------------------
+    const token = localStorage.getItem("token");
+    if (!token) window.location.href = "/";
+
+    function authHeaders(extra = {}) {
+      return {
+        ...extra,
+        "Authorization": `Bearer ${localStorage.getItem("token")}`,
+      };
+    }
+
+    function setTheme(mode) {
+      document.documentElement.dataset.theme = mode;
+      localStorage.setItem("theme", mode);
+    }
+
+    setTheme(localStorage.getItem("theme") || "light");
+
+    document.getElementById("toggleTheme").addEventListener("click", () => {
+      const current = document.documentElement.dataset.theme;
+      setTheme(current === "dark" ? "light" : "dark");
+    });
+
+    document.getElementById("logoutBtn").addEventListener("click", () => {
+      localStorage.removeItem("token");
+      window.location.href = "/";
+    });
+
+    // ----------------------------
+    // UI
+    // ----------------------------
+    const tasksToday = document.getElementById("tasksToday");
+    const tasksWeek  = document.getElementById("tasksWeek");
+    const tasksLater = document.getElementById("tasksLater");
+    const tasksDone  = document.getElementById("tasksDone");
+
+    const msg = document.getElementById("msg");
+    const filterSelect = document.getElementById("filterSelect");
+    const sortSelect = document.getElementById("sortSelect");
+    const summaryText = document.getElementById("summaryText");
+
+    const planBtn = document.getElementById("planBtn");
+    const clearPlanBtn = document.getElementById("clearPlanBtn");
+    const budgetMinutesInput = document.getElementById("budgetMinutes");
+    const planArea = document.getElementById("planArea");
+    const planTasksDiv = document.getElementById("planTasks");
+    const planMeta = document.getElementById("planMeta");
+
+    const nextBtn = document.getElementById("nextBtn");
+    const nextBox = document.getElementById("nextBox");
+
+    filterSelect.value = localStorage.getItem("filter") || "all";
+    sortSelect.value = localStorage.getItem("sort") || "smart";
+
+    let allTasks = [];
+    let plannedTaskIds = new Set();
+    let nextTaskId = null;
+
+    // ----------------------------
+    // Errors
+    // ----------------------------
+    async function parseApiError(res) {
+      let data = {};
+      try { data = await res.json(); } catch {}
+
+      if (data.detail && Array.isArray(data.detail)) {
+        const first = data.detail[0] || {};
+        const field = first.loc ? first.loc[first.loc.length - 1] : "field";
+        const rawMsg = first.msg || "Invalid input";
+        return `${field}: ${rawMsg}`;
+      }
+
+      if (data.detail) return String(data.detail);
+      return `Request failed (${res.status})`;
+    }
+
+    function forceLogout() {
+      localStorage.removeItem("token");
+      window.location.href = "/";
+    }
+
+    // ----------------------------
+    // API
+    // ----------------------------
+    async function apiGetTasks() {
+      const sort = sortSelect.value || "smart";
+      const status = filterSelect.value || "all";
+      const res = await fetch(`/tasks?sort=${encodeURIComponent(sort)}&status=${encodeURIComponent(status)}`, {
+        headers: authHeaders()
+      });
+      if (res.status === 401) { forceLogout(); return []; }
+      if (!res.ok) throw new Error(await parseApiError(res));
+      return await res.json();
+    }
+
+    async function apiCreateTask(payload) {
+      const res = await fetch("/tasks", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401) { forceLogout(); return null; }
+      if (!res.ok) throw new Error(await parseApiError(res));
+      return await res.json();
+    }
+
+    async function apiMarkDone(id) {
+      const res = await fetch(`/tasks/${id}/done`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (res.status === 401) { forceLogout(); return null; }
+      if (!res.ok) throw new Error(await parseApiError(res));
+      try { return await res.json(); } catch { return null; }
+    }
+
+    async function apiDeleteTask(id) {
+      const res = await fetch(`/tasks/${id}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (res.status === 401) { forceLogout(); return null; }
+      if (!res.ok) throw new Error(await parseApiError(res));
+      return await res.json().catch(() => ({}));
+    }
+
+    async function apiSavePlan(minutes_budget) {
+      const res = await fetch(`/tasks/plan/save`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ minutes_budget }),
+      });
+      if (res.status === 401) { forceLogout(); return null; }
+      if (!res.ok) throw new Error(await parseApiError(res));
+      return await res.json();
+    }
+
+    async function apiGetTodayPlan() {
+      const res = await fetch(`/tasks/plan/today`, {
+        headers: authHeaders(),
+      });
+      if (res.status === 401) { forceLogout(); return null; }
+      if (!res.ok) throw new Error(await parseApiError(res));
+      return await res.json();
+    }
+
+    async function apiNext(max_minutes=120) {
+      const res = await fetch(`/tasks/next?max_minutes=${encodeURIComponent(max_minutes)}`, {
+        headers: authHeaders(),
+      });
+      if (res.status === 401) { forceLogout(); return null; }
+      if (!res.ok) throw new Error(await parseApiError(res));
+      return await res.json();
+    }
+
+    // ----------------------------
+    // Smart logic (frontend for sections/badges only)
+    // ----------------------------
+    function escapeHtml(str) {
+      return String(str ?? "").replace(/[&<>"']/g, (m) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[m]));
+    }
+
+    function parseDate(d) {
+      if (!d) return null;
+      const dt = new Date(d + "T00:00:00");
+      return isNaN(dt.getTime()) ? null : dt;
+    }
+
+    function startOfToday() {
+      const t = new Date();
+      t.setHours(0,0,0,0);
+      return t;
+    }
+
+    function daysUntil(due) {
+      const dt = parseDate(due);
+      if (!dt) return Infinity;
+      const diff = dt.getTime() - startOfToday().getTime();
+      return Math.floor(diff / (1000 * 60 * 60 * 24));
+    }
+
+    function urgencyScore(task) {
+      const du = daysUntil(task.due_date);
+      if (du === Infinity) return 1;
+      if (du < 0) return 25;
+      if (du === 0) return 20;
+      if (du <= 2) return 16;
+      if (du <= 7) return 10;
+      if (du <= 14) return 6;
+      return 3;
+    }
+
+    function smartScore(task) {
+      if (task.is_done) return -9999;
+      const imp = Number(task.importance ?? 3);
+      return urgencyScore(task) * imp;
+    }
+
+    function badgeFor(task) {
+      if (task.is_done) return "";
+      const du = daysUntil(task.due_date);
+      if (du < 0) return `<span class="badge overdue">Overdue</span>`;
+      if (du === 0) return `<span class="badge today">Today</span>`;
+      if (du <= 7) return `<span class="badge week">This week</span>`;
+      return "";
+    }
+
+    function minutesLabel(task) {
+      const m = task.estimated_minutes;
+      if (!m) return `<span class="pill">⏱️ ? min</span>`;
+      return `<span class="pill">⏱️ ${escapeHtml(m)} min</span>`;
+    }
+
+    function importanceLabel(task) {
+      const imp = Number(task.importance ?? 3);
+      return `<span class="pill">⭐ ${imp}/5</span>`;
+    }
+
+    // ----------------------------
+    // Render
+    // ----------------------------
+    function renderTaskList(container, tasks, showEmptyText = true) {
+      container.innerHTML = "";
+
+      if (!tasks.length) {
+        if (showEmptyText) container.innerHTML = "<p class='muted'>No tasks.</p>";
+        return;
+      }
+
+      for (const t of tasks) {
+        const el = document.createElement("div");
+
+        const isPlanned = plannedTaskIds.has(String(t.id));
+        const isNext = String(t.id) === String(nextTaskId);
+
+        const du = daysUntil(t.due_date);
+        const urgencyClass =
+          t.is_done ? "" :
+          (du < 0 ? " overdue-card" :
+           du === 0 ? " today-card" :
+           du <= 7 ? " week-card" : "");
+
+        el.className =
+          "task" +
+          (t.is_done ? " done" : "") +
+          (isPlanned ? " planned" : "") +
+          (isNext ? " next" : "") +
+          urgencyClass;
+
+        el.innerHTML = `
+          <div class="task-left">
+            <div class="task-title">
+              ${escapeHtml(t.title)}
+              ${badgeFor(t)}
+            </div>
+            <div class="task-meta">
+              ${importanceLabel(t)}
+              ${minutesLabel(t)}
+              <span>${escapeHtml(t.subject || "General")}</span>
+              <span>•</span>
+              <span>${t.due_date ? escapeHtml(t.due_date) : "No due date"}</span>
+              <span>•</span>
+              <span class="muted-small">Smart: ${smartScore(t)}</span>
+            </div>
+          </div>
+          <div class="task-actions">
+            ${t.is_done ? "" : `<button class="btn" data-action="done" data-id="${t.id}">Done</button>`}
+            <button class="btn danger" data-action="delete" data-id="${t.id}">Delete</button>
+          </div>
+        `;
+
+        container.appendChild(el);
+      }
+    }
+
+    function renderSummary() {
+      const total = allTasks.length;
+      const done = allTasks.filter(t => t.is_done).length;
+      const active = total - done;
+
+      const overdueToday = allTasks.filter(t => !t.is_done && daysUntil(t.due_date) <= 0).length;
+      const week = allTasks.filter(t => !t.is_done && daysUntil(t.due_date) >= 1 && daysUntil(t.due_date) <= 7).length;
+
+      summaryText.textContent =
+        `Active: ${active} • Done: ${done} • Today/Overdue: ${overdueToday} • This week: ${week}`;
+    }
+
+    function renderTasks() {
+      // backend already returned tasks in the selected sort/status.
+      const tasks = [...allTasks];
+
+      const todayOverdue = tasks.filter(t => !t.is_done && daysUntil(t.due_date) <= 0);
+      const week = tasks.filter(t => !t.is_done && daysUntil(t.due_date) >= 1 && daysUntil(t.due_date) <= 7);
+      const later = tasks.filter(t => !t.is_done && daysUntil(t.due_date) > 7);
+      const done = tasks.filter(t => t.is_done);
+
+      renderTaskList(tasksToday, todayOverdue);
+      renderTaskList(tasksWeek, week);
+      renderTaskList(tasksLater, later);
+      renderTaskList(tasksDone, done);
+
+      renderSummary();
+    }
+
+    async function refreshTasks() {
+      allTasks = await apiGetTasks();
+      renderTasks();
+    }
+
+    async function loadTodayPlan() {
+      const plan = await apiGetTodayPlan();
+      if (!plan) return;
+
+      const tasks = plan.tasks || [];
+      plannedTaskIds = new Set(tasks.map(t => String(t.id)));
+
+      if (tasks.length) {
+        planArea.style.display = "block";
+        planMeta.textContent = `Saved plan: used ${plan.used_minutes} min of ${plan.minutes_budget}. Remaining ${plan.remaining_minutes} min.`;
+        renderTaskList(planTasksDiv, tasks, false);
+      } else {
+        planArea.style.display = "none";
+        planMeta.textContent = "";
+        planTasksDiv.innerHTML = "";
+      }
+    }
+
+    // ----------------------------
+    // Events
+    // ----------------------------
+    document.getElementById("taskForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      msg.textContent = "";
+
+      const title = document.getElementById("title").value.trim();
+      const subject = document.getElementById("subject").value.trim();
+      const due_date = document.getElementById("due_date").value;
+
+      const importance = Number(document.getElementById("importance").value);
+      const minutesRaw = document.getElementById("estimated_minutes").value;
+      const estimated_minutes = minutesRaw ? Number(minutesRaw) : null;
+
+      try {
+        await apiCreateTask({
+          title,
+          subject: subject || "General",
+          due_date: due_date || null,
+          importance,
+          estimated_minutes
+        });
+
+        e.target.reset();
+        msg.textContent = "✅ Task added!";
+        await refreshTasks();
+        await loadTodayPlan(); // in case new task changes your plan later
+      } catch (err) {
+        msg.textContent = "❌ " + (err.message || "Something went wrong");
+      }
+    });
+
+    document.querySelector(".smart-sections").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+
+      const action = btn.dataset.action;
+      const id = btn.dataset.id;
+
+      try {
+        if (action === "done") await apiMarkDone(id);
+        if (action === "delete") await apiDeleteTask(id);
+
+        plannedTaskIds.delete(String(id));
+        if (String(id) === String(nextTaskId)) nextTaskId = null;
+
+        await refreshTasks();
+        await loadTodayPlan();
+      } catch (err) {
+        alert("❌ " + (err.message || "Something went wrong"));
+      }
+    });
+
+    filterSelect.addEventListener("change", async () => {
+      localStorage.setItem("filter", filterSelect.value);
+      await refreshTasks();
+      // plan + next highlight stay
+      renderTasks();
+    });
+
+    sortSelect.addEventListener("change", async () => {
+      localStorage.setItem("sort", sortSelect.value);
+      await refreshTasks();
+      renderTasks();
+    });
+
+    planBtn.addEventListener("click", async () => {
+      const budget = Number(budgetMinutesInput.value);
+      if (!budget || budget < 10) {
+        planMeta.textContent = "Enter a valid minutes budget (e.g. 120).";
+        return;
+      }
+
+      try {
+        const plan = await apiSavePlan(budget);
+
+        const tasks = plan.tasks || [];
+        plannedTaskIds = new Set(tasks.map(t => String(t.id)));
+
+        planArea.style.display = tasks.length ? "block" : "none";
+        planMeta.textContent = `Saved plan: used ${plan.used_minutes} min of ${plan.minutes_budget}. Remaining ${plan.remaining_minutes} min.`;
+
+        renderTaskList(planTasksDiv, tasks, false);
+
+        // refresh main list to show planned highlights
+        await refreshTasks();
+      } catch (err) {
+        planMeta.textContent = "❌ " + (err.message || "Planning failed");
+      }
+    });
+
+    clearPlanBtn.addEventListener("click", async () => {
+      plannedTaskIds = new Set();
+      planArea.style.display = "none";
+      planMeta.textContent = "";
+      planTasksDiv.innerHTML = "";
+      budgetMinutesInput.value = "";
+      renderTasks();
+    });
+
+    nextBtn.addEventListener("click", async () => {
+      try {
+        const res = await apiNext(120);
+        if (!res) return;
+
+        if (!res.task) {
+          nextTaskId = null;
+          nextBox.style.display = "block";
+          nextBox.textContent = res.reason || "No suggestion.";
+          renderTasks();
+          return;
+        }
+
+        nextTaskId = res.task.id;
+        nextBox.style.display = "block";
+        nextBox.innerHTML = `<strong>Do this:</strong> ${escapeHtml(res.task.title)}<br><span class="muted-small">${escapeHtml(res.reason)}</span>`;
+
+        renderTasks();
+      } catch (err) {
+        nextBox.style.display = "block";
+        nextBox.textContent = "❌ " + (err.message || "Failed to pick a task");
+      }
+    });
+
+    // Initial load
+    (async () => {
+      await refreshTasks();
+      await loadTodayPlan();
+    })();
+  </script>
+</body>
+</html>

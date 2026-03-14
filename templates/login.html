@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Login • Planner</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Smart Student Planner</h1>
+
+    <section class="card">
+      <h2>Login</h2>
+      <form id="loginForm" class="form">
+        <input id="username" placeholder="Username" required />
+        <input id="password" placeholder="Password" type="password" required />
+        <button type="submit">Login</button>
+      </form>
+
+      <div class="row">
+        <button id="registerBtn" class="btn">Register</button>
+        <button id="toggleTheme" class="btn">Toggle theme</button>
+      </div>
+
+      <p id="msg" class="msg"></p>
+    </section>
+  </main>
+
+  <script>
+    const msg = document.getElementById("msg");
+
+    function setTheme(mode) {
+      document.documentElement.dataset.theme = mode;
+      localStorage.setItem("theme", mode);
+    }
+    setTheme(localStorage.getItem("theme") || "light");
+    document.getElementById("toggleTheme").onclick = () => {
+      setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+    };
+
+    async function login(username, password) {
+      const form = new URLSearchParams();
+      form.append("username", username);
+      form.append("password", password);
+
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: form.toString()
+      });
+
+      if (!res.ok) throw new Error("Bad credentials");
+      return await res.json();
+    }
+
+    async function register(username, password) {
+      const res = await fetch("/auth/register", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ username, password })
+      });
+
+      // Try to read JSON error body (FastAPI sends useful details)
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        // Pydantic validation errors (422): show first field error nicely
+        if (data.detail && Array.isArray(data.detail)) {
+          const first = data.detail[0] || {};
+          const field = first.loc ? first.loc[first.loc.length - 1] : "field";
+          const rawMsg = first.msg || "Invalid input";
+
+          // Make it friendlier for password length
+          let pretty = rawMsg;
+          if (field === "password" && rawMsg.toLowerCase().includes("at least")) {
+            pretty = "Password is too short (minimum 8 characters).";
+          }
+
+          throw new Error(`${field}: ${pretty}`);
+        }
+
+        // HTTPException errors (like "Username already taken")
+        if (data.detail) {
+          throw new Error(data.detail);
+        }
+
+        throw new Error("Register failed");
+      }
+
+      return data;
+    }
+
+    document.getElementById("loginForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      msg.textContent = "";
+      try {
+        const data = await login(
+          document.getElementById("username").value.trim(),
+          document.getElementById("password").value
+        );
+        localStorage.setItem("token", data.access_token);
+        window.location.href = "/app";
+      } catch {
+        msg.textContent = "❌ Login failed";
+      }
+    });
+
+    document.getElementById("registerBtn").addEventListener("click", async () => {
+      msg.textContent = "";
+      try {
+        await register(
+          document.getElementById("username").value.trim(),
+          document.getElementById("password").value
+        );
+        msg.textContent = "✅ Registered. Now login.";
+      } catch (err) {
+        msg.textContent = "❌ " + (err.message || "Register failed");
+      }
+    });
+  </script>
+</body>
+</html>
